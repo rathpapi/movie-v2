@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin Panel</title>
+  <style>
+    body{margin:0;font-family:sans-serif;background:#0f1724;color:#fff}
+    header{padding:16px;text-align:center;background:#111}
+    h1{margin:0}
+    .container{max-width:800px;margin:20px auto;padding:20px;background:#1a1a2e;border-radius:10px}
+    input,select{width:100%;padding:8px;margin:6px 0;border-radius:6px;border:1px solid #333;background:#07111a;color:#fff}
+    .btn{padding:8px 12px;margin-top:10px;background:#06b6d4;border:none;border-radius:6px;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:20px}
+    .card{background:#222;border-radius:8px;padding:6px}
+    .poster{width:100%;height:100px;object-fit:cover;border-radius:6px}
+    .small-btn{background:#444;border:none;padding:4px 8px;margin:2px;border-radius:4px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header><h1>Admin Panel</h1></header>
+  <main class="container">
+    <div id="loginBox"></div>
+    <div id="adminBox" style="display:none">
+      <h3>Add / Edit Movie</h3>
+      <label>Title</label>
+      <input id="titleIn" placeholder="Title">
+      <label>Poster URL</label>
+      <input id="posterIn" placeholder="Poster URL">
+      <label>Video URL</label>
+      <input id="videoIn" placeholder="Video URL">
+      <video id="videoPreview" style="width:100%;margin:10px 0;max-height:200px;display:none" controls></video>
+      <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+      <label>Rating</label>
+      <div id="starRating" style="font-size:2em;cursor:pointer;margin-bottom:8px;"></div>
+      <input id="ratingIn" type="hidden">
+      <label>Category</label>
+      <select id="categoryIn">
+        <option>Action</option>
+        <option>Comedy</option>
+        <option>Drama</option>
+        <option>Horror</option>
+        <option>Sci-Fi</option>
+        <option>Other</option>
+      </select>
+      <label>Episodes</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <input id="epTitleIn" placeholder="Episode Title" style="flex:2">
+        <input id="epVideoIn" placeholder="Episode Video URL" style="flex:3">
+        <button id="addEpBtn" class="btn" type="button">Add Ep</button>
+      </div>
+      <ul id="episodesList" style="list-style:none;padding:0;margin:0 0 10px 0;"></ul>
+      <label>Ads (Montage/Video)</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px;">
+        <select id="adTypeIn" style="flex:1">
+          <option value="montage">Montage</option>
+          <option value="video">Video</option>
+          <option value="banner">Banner</option>
+        </select>
+        <input id="adUrlIn" placeholder="Ad URL" style="flex:3">
+        <select id="adPosIn" style="flex:1">
+          <option value="pre">Pre-roll</option>
+          <option value="mid">Mid-roll</option>
+          <option value="post">Post-roll</option>
+          <option value="banner">Banner</option>
+        </select>
+        <button id="addAdBtn" class="btn" type="button">Add Ad</button>
+      </div>
+      <ul id="adsList" style="list-style:none;padding:0;margin:0 0 10px 0;"></ul>
+      <button id="saveBtn" class="btn">Save</button>
+      <div id="movieList" class="grid"></div>
+    </div>
+  </main>
+
+  <script>
+const API = "http://localhost:4000/api/movies";
+const LOGIN = "http://localhost:4000/api/login";
+let token=null, editingId=null, episodes=[], ads=[];
+
+const loginBox=document.getElementById("loginBox");
+const adminBox=document.getElementById("adminBox");
+const titleIn=document.getElementById("titleIn");
+const posterIn=document.getElementById("posterIn");
+const videoIn=document.getElementById("videoIn");
+const videoPreview=document.getElementById("videoPreview");
+const ratingIn=document.getElementById("ratingIn");
+const starRating=document.getElementById("starRating");
+const categoryIn=document.getElementById("categoryIn");
+const epTitleIn=document.getElementById("epTitleIn");
+const epVideoIn=document.getElementById("epVideoIn");
+const addEpBtn=document.getElementById("addEpBtn");
+const episodesList=document.getElementById("episodesList");
+const saveBtn=document.getElementById("saveBtn");
+const movieList=document.getElementById("movieList");
+const adTypeIn = document.getElementById("adTypeIn");
+const adUrlIn = document.getElementById("adUrlIn");
+const adPosIn = document.getElementById("adPosIn");
+const addAdBtn = document.getElementById("addAdBtn");
+const adsList = document.getElementById("adsList");
+
+function renderAds() {
+  adsList.innerHTML = ads.map((ad,i)=>`
+    <li style="margin-bottom:4px;">
+      <b>${ad.type}</b> [${ad.position}] - <span style="color:#0ff">${ad.url}</span>
+      <button onclick="removeAd(${i})" style="margin-left:8px;background:#e11d48;color:#fff;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;">✕</button>
+    </li>
+  `).join('');
+}
+window.removeAd = function(idx) {
+  ads.splice(idx,1);
+  renderAds();
+};
+addAdBtn.onclick = ()=>{
+  if(adUrlIn.value) {
+    ads.push({type:adTypeIn.value, url:adUrlIn.value, position:adPosIn.value});
+    adUrlIn.value = "";
+    renderAds();
+  }
+};
+
+// --- Star rating logic ---
+function renderStars(rating=0) {
+  let html = "";
+  for(let i=1; i<=10; i++) {
+    html += `<span data-val="${i}" style="color:${i<=rating?'#fbbf24':'#444'};font-size:2em;cursor:pointer;">★</span>`;
+  }
+  starRating.innerHTML = html;
+  // Add click listeners after rendering
+  Array.from(starRating.children).forEach(star => {
+    star.onclick = function() {
+      ratingIn.value = this.dataset.val;
+      renderStars(Number(ratingIn.value));
+    };
+  });
+}
+renderStars(0);
+
+// --- Video preview ---
+videoIn.oninput = function() {
+  if(videoIn.value.trim()) {
+    videoPreview.src = videoIn.value.trim();
+    videoPreview.style.display = "block";
+  } else {
+    videoPreview.style.display = "none";
+    videoPreview.src = "";
+  }
+};
+
+// --- Episodes logic ---
+function renderEpisodes() {
+  episodesList.innerHTML = episodes.map((ep,i)=>`
+    <li style="margin-bottom:4px;">
+      <b>${ep.title||('Ep '+(i+1))}</b>
+      <button onclick="removeEp(${i})" style="margin-left:8px;background:#e11d48;color:#fff;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;">✕</button>
+      <div style="font-size:12px;color:#0ff">${ep.video}</div>
+    </li>
+  `).join('');
+}
+window.removeEp = function(idx) {
+  episodes.splice(idx,1);
+  renderEpisodes();
+};
+addEpBtn.onclick = ()=>{
+  if(epTitleIn.value && epVideoIn.value) {
+    episodes.push({title:epTitleIn.value, video:epVideoIn.value});
+    epTitleIn.value = epVideoIn.value = "";
+    renderEpisodes();
+  }
+};
+
+// --- Load, edit, save movies ---
+async function loadMovies(){
+  const res=await fetch(API);
+  const movies=await res.json();
+  movieList.innerHTML="";
+  movies.forEach(m=>{
+    const card=document.createElement("div");
+    card.className="card";
+    card.innerHTML=`<img class="poster" src="${m.poster}"><div class="meta"><b>${m.title}</b>
+      <div style="font-size:13px;color:#fbbf24;">${m.rating?`⭐ ${m.rating}`:""}</div>
+      <div style="font-size:12px;color:#0ff;">${m.episodes&&m.episodes.length?`${m.episodes.length} Ep`:''}</div>
+      <div>${m.category||""}</div>
+    </div>`;
+    const e=document.createElement("button"); e.textContent="Edit"; e.className="small-btn";
+    const d=document.createElement("button"); d.textContent="Del"; d.className="small-btn";
+    e.onclick=()=>{
+      editingId=m._id;
+      titleIn.value=m.title||"";
+      posterIn.value=m.poster||"";
+      videoIn.value=m.video||"";
+      categoryIn.value=m.category||"Action";
+      ratingIn.value=m.rating||"";
+      renderStars(Number(m.rating)||0);
+      episodes = Array.isArray(m.episodes)?JSON.parse(JSON.stringify(m.episodes)):[];
+      ads = Array.isArray(m.ads)?JSON.parse(JSON.stringify(m.ads)):[];
+      renderEpisodes();
+      renderAds();
+      videoPreview.src = m.video || "";
+      videoPreview.style.display = m.video ? "block" : "none";
+    };
+    d.onclick=async()=>{if(confirm("Delete?")){await fetch(API+"/"+m._id,{method:"DELETE",headers:{Authorization:token}});loadMovies();}};
+    card.appendChild(e);card.appendChild(d);
+    movieList.appendChild(card);
+  });
+}
+
+saveBtn.onclick=async()=>{
+  const movie={
+    title:titleIn.value,
+    poster:posterIn.value,
+    video:videoIn.value,
+    category:categoryIn.value,
+    rating:ratingIn.value,
+    episodes,
+    ads
+  };
+  if(editingId){
+    await fetch(API+"/"+editingId,{method:"PUT",headers:{"Content-Type":"application/json",Authorization:token},body:JSON.stringify(movie)});
+    editingId=null;
+  }else{
+    await fetch(API,{method:"POST",headers:{"Content-Type":"application/json",Authorization:token},body:JSON.stringify(movie)});
+  }
+  titleIn.value=posterIn.value=videoIn.value=ratingIn.value="";
+  renderStars(0);
+  episodes=[];
+  ads=[];
+  renderEpisodes();
+  renderAds();
+  categoryIn.value="Action";
+  videoPreview.style.display="none";
+  loadMovies();
+};
+
+// --- Login logic (simple) ---
+loginBox.innerHTML = `
+  <div style="max-width:300px;margin:40px auto;text-align:center;">
+    <h3>Admin Login</h3>
+    <input id="user" placeholder="Username" style="width:100%;margin-bottom:8px;">
+    <input id="pass" type="password" placeholder="Password" style="width:100%;margin-bottom:8px;">
+    <button id="loginBtn" class="btn">Login</button>
+    <div id="loginMsg" style="color:#e11d48;margin-top:8px;"></div>
+  </div>
+`;
+document.getElementById("loginBtn").onclick = async ()=>{
+  const user = document.getElementById("user").value;
+  const pass = document.getElementById("pass").value;
+  const res = await fetch(LOGIN, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:user,password:pass})});
+  const data = await res.json();
+  if(data.token){
+    token = data.token;
+    loginBox.style.display="none";
+    adminBox.style.display="";
+    loadMovies();
+  }else{
+    document.getElementById("loginMsg").textContent = "Login failed!";
+  }
+};
+  </script>
+</body>
+</html>

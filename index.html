@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>CamDrama</title>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#081226;color:#e6eef6}
+    header{padding:16px;border-bottom:1px solid rgba(255,255,255,0.1);text-align:center}
+    h1{margin:0}
+    .container{max-width:1100px;margin:20px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+    .card{background:#111827;border-radius:10px;overflow:hidden;cursor:pointer}
+    .poster{width:100%;height:260px;object-fit:cover}
+    .meta{padding:10px}
+    .title{font-weight:bold;margin:0 0 4px 0}
+    .small{font-size:13px;color:#9ca3af}
+    .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.8)}
+    .modal.show{display:flex}
+    .player-wrap{width:100%;max-width:900px;background:#000;border-radius:8px;overflow:hidden}
+    video{width:100%;height:60vh}
+    .actions{padding:10px;text-align:right;background:#111}
+    .btn{padding:6px 12px;background:#06b6d4;border:none;border-radius:6px;cursor:pointer}
+    .episode-list {
+      max-height: 160px;
+      overflow-y: auto;
+      margin-bottom: 8px;
+      padding-right: 4px;
+    }
+    .episode-btn {
+      margin:3px 3px 3px 0;
+      padding:4px 10px;
+      font-size:14px;
+      background:#06b6d4;
+      border:none;
+      border-radius:6px;
+      cursor:pointer;
+      color:#fff;
+      transition:background 0.2s;
+    }
+    .episode-btn.selected {
+      background:#0284c7;
+    }
+    .rating-badge {
+      display:inline-block;
+      background:#fbbf24;
+      color:#222;
+      font-weight:bold;
+      border-radius:6px;
+      padding:2px 8px;
+      font-size:13px;
+      margin-left:4px;
+      vertical-align:middle;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <header>
+    <h1>🎬 CamDrama</h1>
+  </header>
+
+  <main class="container">
+    <div style="display:flex;gap:10px;margin-bottom:12px">
+      <input id="searchBar" type="text" placeholder="Search..." style="flex:1;padding:8px;border-radius:6px;border:1px solid #222;background:#07111a;color:inherit"/>
+      <select id="filterCategory" style="padding:8px;border-radius:6px;border:1px solid #222;background:#07111a;color:inherit">
+        <option value="">All</option>
+        <option>Action</option><option>Comedy</option><option>Drama</option>
+        <option>Horror</option><option>Sci-Fi</option><option>Other</option>
+      </select>
+    </div>
+    <div class="grid" id="movieGrid"></div>
+  </main>
+
+  <div id="playerModal" class="modal">
+    <div class="player-wrap" style="max-width:900px;width:100%;background:#000;border-radius:8px;overflow:hidden">
+      <div id="movieDetail" style="padding:18px 18px 0 18px;color:#fff"></div>
+      <video id="player" controls style="margin-top:10px"></video>
+      <div class="actions"><button id="closeBtn" class="btn">Close</button></div>
+    </div>
+  </div>
+
+  <script>
+const API = "http://localhost:4000/api/movies";
+const grid = document.getElementById("movieGrid");
+const searchBar = document.getElementById("searchBar");
+const filterCategory = document.getElementById("filterCategory");
+const playerModal = document.getElementById("playerModal");
+const player = document.getElementById("player");
+const closeBtn = document.getElementById("closeBtn");
+const movieDetail = document.getElementById("movieDetail");
+
+let movies = [], searchTerm="", category="";
+let hlsInstance = null; // Track HLS instance
+
+async function loadMovies(){
+  const res = await fetch(API);
+  movies = await res.json();
+  render();
+}
+
+function render(){
+  grid.innerHTML="";
+  const filtered = movies.filter(m =>
+    m.title.toLowerCase().includes(searchTerm) &&
+    (!category || m.category===category)
+  );
+  if(!filtered.length){grid.innerHTML="<p>No movies found.</p>";return;}
+  filtered.forEach(m=>{
+    const card=document.createElement("div");
+    card.className="card";
+    card.innerHTML=`
+      <img class="poster" src="${m.poster}" alt="">
+      <div class="meta">
+        <p class="title">${m.title}
+          ${m.rating ? `<span class="rating-badge">⭐ ${m.rating}</span>` : ""}
+        </p>
+        ${m.category ? `<p class="small">${m.category}</p>` : ""}
+        ${m.episodes && Array.isArray(m.episodes) && m.episodes.length
+          ? `<p class="small">${m.episodes.length} Episode${m.episodes.length>1?"s":""}</p>` : ""}
+      </div>
+    `;
+    card.onclick=()=>openPlayer(m);
+    grid.appendChild(card);
+  });
+}
+
+function openPlayer(movie){
+  // Clean up previous HLS instance
+  if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
+  player.pause(); player.src="";
+  player.load();
+
+  // Show movie details
+  let detailHtml = `<h2 style="margin:0 0 8px 0">${movie.title}</h2>`;
+  if(movie.rating) detailHtml += `<div style="margin-bottom:6px">⭐ Rating: ${movie.rating}</div>`;
+  if(movie.episodes && Array.isArray(movie.episodes) && movie.episodes.length){
+    detailHtml += `<div class="episode-list"><b>Episodes:</b><br>`;
+    movie.episodes.forEach((ep,i)=>{
+      detailHtml += `<button class="episode-btn" data-idx="${i}"
+        onclick="window.playEpisode('${encodeURIComponent(JSON.stringify(ep.video))}', this)">
+        ${ep.title||('Episode '+(i+1))}
+      </button>`;
+    });
+    detailHtml += `</div>`;
+  }
+  movieDetail.innerHTML = detailHtml;
+
+  // Default: play main video or first episode
+  let videoUrl = movie.video;
+  if(movie.episodes && Array.isArray(movie.episodes) && movie.episodes.length){
+    videoUrl = movie.episodes[0].video;
+    // Highlight first episode
+    setTimeout(()=>{
+      const btns = document.querySelectorAll("#movieDetail .episode-btn");
+      if(btns[0]) btns[0].classList.add("selected");
+    }, 0);
+  }
+  playVideo(videoUrl);
+
+  playerModal.classList.add("show");
+}
+
+// Helper to play video (handles HLS)
+function playVideo(url){
+  if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
+  player.pause(); player.src=""; player.load();
+  url = decodeURIComponent(url);
+  if(url.endsWith(".m3u8") || url.includes("m3u8")){
+    if(Hls.isSupported()){
+      hlsInstance = new Hls();
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(player);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED,()=>player.play());
+    }else if(player.canPlayType('application/vnd.apple.mpegurl')){
+      player.src = url;
+      player.play();
+    }else{
+      alert("Your browser does not support this video format.");
+    }
+  }else{
+    player.src=url;
+    player.play();
+  }
+}
+
+// Expose playEpisode for episode buttons
+window.playEpisode = function(url, btn){
+  playVideo(JSON.parse(decodeURIComponent(url)));
+  // Highlight selected episode button
+  document.querySelectorAll("#movieDetail .episode-btn").forEach(b=>b.classList.remove("selected"));
+  if(btn) btn.classList.add("selected");
+};
+
+closeBtn.onclick=()=>{
+  if(hlsInstance){ hlsInstance.destroy(); hlsInstance = null; }
+  player.pause(); player.src=""; playerModal.classList.remove("show");
+};
+searchBar.oninput=()=>{searchTerm=searchBar.value.toLowerCase();render();};
+filterCategory.onchange=()=>{category=filterCategory.value;render();};
+
+loadMovies();
+  </script>
+</body>
+</html>
