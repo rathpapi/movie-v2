@@ -5,6 +5,9 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import path from "path";
 import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+
+dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
@@ -12,10 +15,12 @@ app.use(cors());
 app.use(express.json());
 
 // ===== DB connect =====
-mongoose.connect("mongodb://127.0.0.1:27017/moviesite", {
+mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-});
+})
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 
 // ===== Schema =====
 const movieSchema = new mongoose.Schema({
@@ -60,12 +65,12 @@ async function createDefaultAdmin() {
 }
 createDefaultAdmin();
 
-// ===== Middleware: Auth =====
+// Auth middleware
 function auth(req, res, next) {
   const token = req.headers["authorization"];
   if (!token) return res.status(401).json({ error: "No token" });
   try {
-    req.user = jwt.verify(token, "SECRET_KEY");
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {
     res.status(401).json({ error: "Invalid token" });
@@ -85,13 +90,14 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+// Login route
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   const user = await User.findOne({ username });
   if (!user) return res.status(400).json({ error: "User not found" });
   const ok = await bcrypt.compare(password, user.password);
   if (!ok) return res.status(400).json({ error: "Wrong password" });
-  const token = jwt.sign({ id: user._id }, "SECRET_KEY", { expiresIn: "1h" });
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
   res.json({ token });
 });
 
@@ -123,5 +129,10 @@ app.get("/admin", (req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
+app.get("/", (req, res) => {
+  res.send("API is running...");
+});
+
 // ===== Start =====
-app.listen(4000, () => console.log("API running at http://localhost:4000"));
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
